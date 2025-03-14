@@ -1,0 +1,13 @@
+.DS_Store
+*.exe
+ksubdomain.yaml
+worker.yaml
+*.log
+*/conf/*.yaml
+out
+*_linux_amd64
+*_linux_arm64
+*_windows_amd64
+*_windows_arm64
+*_darwin_amd64
+*_darwin_arm64
