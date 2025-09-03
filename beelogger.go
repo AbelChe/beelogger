@@ -2,14 +2,26 @@ package beelogger
 
 import (
 	"fmt"
+	"os"
+	"path"
+	"runtime"
+	"strings"
+	"sync"
+
 	"github.com/logrusorgru/aurora"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"os"
 )
 
+var (
+	_logger     *zerolog.Logger
+	fnCache     sync.Map
+	allowCaller = true
+)
+
+// SetLevel 仅设置日志级别；函数信息在 Debug / Error 系列调用时自动添加（如果 allowCaller=true）
 func SetLevel(level string) {
-	switch level {
+	switch strings.ToLower(level) {
 	case "off":
 		log.Logger = log.Logger.Level(zerolog.Disabled)
 	case "fatal":
@@ -22,83 +34,145 @@ func SetLevel(level string) {
 		log.Logger = log.Logger.Level(zerolog.InfoLevel)
 	case "debug":
 		log.Logger = log.Logger.Level(zerolog.DebugLevel)
-		//Add file and line number to log
-		log.Logger = log.With().Caller().Logger()
 	default:
 		log.Logger = log.Logger.Level(zerolog.InfoLevel)
 	}
 }
 
-var (
-	_logger *zerolog.Logger
-)
-
 func init() {
-	Color := true
+	colorEnabled := false // 你原注释里说要彩色，这里用正向变量名
 	output := zerolog.ConsoleWriter{
-		Out:          os.Stdout,        //os.Stderr:无法重定向文件
-		NoColor:      Color,            //日志颜色
-		TimeFormat:   "01-02 15:04:05", //日志时间参数
-		PartsExclude: []string{},
+		Out:        os.Stdout,
+		NoColor:    !colorEnabled, // zerolog 的逻辑：NoColor=true 表示不要颜色
+		TimeFormat: "01-02 15:04:05",
 	}
+
 	output.FormatLevel = func(i interface{}) string {
-		prefix := ""
-		au := aurora.NewAurora(Color)
+		au := aurora.NewAurora(true)
 		switch i {
 		case "fatal":
-			prefix = au.Bold(au.Red("[FATAL]")).String()
+			return au.Bold(au.Red("[FATAL]")).String()
 		case "error":
-			prefix = au.Red("[ERR]").String()
+			return au.Red("[ERR]").String()
 		case "warn":
-			prefix = au.Yellow("[WRN]").String()
+			return au.Yellow("[WRN]").String()
 		case "info":
-			prefix = au.Blue("[INF]").String()
+			return au.Blue("[INF]").String()
 		case "debug":
-			prefix = au.Magenta("[DBG]").String()
+			return au.Magenta("[DBG]").String()
 		default:
-			break
+			return fmt.Sprintf("[%s]", i)
 		}
-		return prefix
 	}
 	output.FormatMessage = func(i interface{}) string {
-		return fmt.Sprintf("%s", i)
+		return fmt.Sprintf("%v", i)
 	}
+
 	_l := log.Output(output)
 	_logger = &_l
 }
 
-func GetLogger() *zerolog.Logger {
-	return _logger
-}
+// ---- 对外基础获取 ----
+func GetLogger() *zerolog.Logger { return _logger }
+
+// ---- 公共级别封装 ----
+// Info / Warn 不自动加函数信息（按你的需求只在 Debug 和 Error 系列加）
+// 如果以后想给 Info 也加，改成调用 addCallerFields 即可。
 
 func Info() *zerolog.Event {
 	return _logger.Info()
-}
-
-func Debug() *zerolog.Event {
-	return _logger.Debug()
 }
 
 func Warn() *zerolog.Event {
 	return _logger.Warn()
 }
 
+func Debug() *zerolog.Event {
+	e := _logger.Debug()
+	// 如果 Debug 级别没启用(e.Disabled)则不做任何 caller 开销
+	return addCallerFieldsIfEnabled(e, 2) // skip=2: addCallerFieldsIfEnabled -> Debug -> 用户代码
+}
+
 func Error() *zerolog.Event {
-	return _logger.Error()
+	e := _logger.Error()
+	return addCallerFieldsForce(e, 2)
+}
+
+// Err(err) 依然要附带函数信息
+func Err(err error) *zerolog.Event {
+	e := _logger.Err(err)
+	return addCallerFieldsForce(e, 2)
 }
 
 func Fatal() *zerolog.Event {
-	return _logger.Fatal()
+	e := _logger.Fatal()
+	return addCallerFieldsForce(e, 2)
 }
 
-func Err(err error) *zerolog.Event {
-	return _logger.Err(err)
+func Panic() *zerolog.Event {
+	e := _logger.Panic()
+	return addCallerFieldsForce(e, 2)
 }
 
-func Panic(err error) *zerolog.Event {
-	return _logger.Panic()
-}
-
+// 通用 Log() 不加（保持灵活）
 func Log() *zerolog.Event {
 	return _logger.Log()
+}
+
+// ---- 采集调用者信息的内部方法 ----
+func addCallerFieldsIfEnabled(e *zerolog.Event, skip int) *zerolog.Event {
+	if !allowCaller {
+		return e
+	}
+	if e == nil || !e.Enabled() { // 未启用级别，不做开销
+		return e
+	}
+	fn, file, line := callerInfo(skip + 1) // 再 +1 跳过本函数
+	return e.
+		Str("func", fn).
+		Str("caller", fmt.Sprintf("%s:%d", file, line))
+}
+
+func addCallerFieldsForce(e *zerolog.Event, skip int) *zerolog.Event {
+	if !allowCaller || e == nil {
+		return e
+	}
+	// 对于 Error 系列，即使当前级别允许或不允许，这里 e.Enabled() 基本是 true（因为调用的是已通过级别过滤的方法）。
+	// 保险起见仍判断：
+	if !e.Enabled() {
+		return e
+	}
+	fn, file, line := callerInfo(skip + 1)
+	return e.
+		Str("func", fn).
+		Str("caller", fmt.Sprintf("%s:%d", file, line))
+}
+
+func callerInfo(skip int) (fnShort, fileShort string, line int) {
+	pc, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "unknown", "unknown", 0
+	}
+	fileShort = path.Base(file)
+	fnShort = resolveFuncName(pc)
+	return
+}
+
+func resolveFuncName(pc uintptr) string {
+	if v, ok := fnCache.Load(pc); ok {
+		return v.(string)
+	}
+	name := "unknown"
+	if f := runtime.FuncForPC(pc); f != nil {
+		n := f.Name()
+		if idx := strings.LastIndex(n, "/"); idx >= 0 {
+			n = n[idx+1:]
+		}
+		if i := strings.Index(n, "["); i >= 0 { // 去掉泛型实例化部分
+			n = n[:i]
+		}
+		name = n
+	}
+	fnCache.Store(pc, name)
+	return name
 }
