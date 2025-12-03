@@ -1,4 +1,4 @@
-module gitlab.4399.cn/gz007/beelogger
+module github.com/AbelChe/beelogger
 
 go 1.23
 
