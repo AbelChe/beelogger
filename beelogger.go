@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/logrusorgru/aurora"
+	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -40,7 +41,7 @@ func SetLevel(level string) {
 }
 
 func init() {
-	colorEnabled := os.Getenv("TERM") != "" && os.Getenv("NO_COLOR") == ""
+	colorEnabled := isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == ""
 	output := zerolog.ConsoleWriter{
 		Out:        os.Stdout,
 		NoColor:    !colorEnabled,
