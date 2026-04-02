@@ -40,15 +40,15 @@ func SetLevel(level string) {
 }
 
 func init() {
-	colorEnabled := false // 你原注释里说要彩色，这里用正向变量名
+	colorEnabled := os.Getenv("TERM") != "" && os.Getenv("NO_COLOR") == ""
 	output := zerolog.ConsoleWriter{
 		Out:        os.Stdout,
-		NoColor:    !colorEnabled, // zerolog 的逻辑：NoColor=true 表示不要颜色
+		NoColor:    !colorEnabled,
 		TimeFormat: "01-02 15:04:05",
 	}
 
 	output.FormatLevel = func(i interface{}) string {
-		au := aurora.NewAurora(true)
+		au := aurora.NewAurora(colorEnabled)
 		switch i {
 		case "fatal":
 			return au.Bold(au.Red("[FATAL]")).String()
