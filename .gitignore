@@ -11,3 +11,4 @@ out
 *_windows_arm64
 *_darwin_amd64
 *_darwin_arm64
+.idea/
