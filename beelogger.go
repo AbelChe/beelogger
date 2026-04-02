@@ -41,7 +41,7 @@ func SetLevel(level string) {
 }
 
 func init() {
-	colorEnabled := isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == ""
+	colorEnabled := isatty.IsTerminal(os.Stdout.Fd())
 	output := zerolog.ConsoleWriter{
 		Out:        os.Stdout,
 		NoColor:    !colorEnabled,
